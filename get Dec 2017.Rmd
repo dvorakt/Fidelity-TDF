@@ -1,0 +1,77 @@
+```{r}
+library(tidyverse)
+library(rvest)
+
+# Dec 2017
+url <- "https://www.sec.gov/Archives/edgar/data/880195/000137949118000937/filing717.htm"
+page <- read_html(url)
+node <- html_nodes(page, 'table') 
+all <- data.frame()
+for (i in seq(2,26,2)) {
+  t <- html_table(node[[i]], fill=TRUE) #take the first node
+  t$target <- 2000+5*i/2
+  t$fund <- "Advisor"
+  all <- bind_rows(all,t)
+}
+
+for (i in seq(28,52,2)) {
+  t <- html_table(node[[i]], fill=TRUE) #take the first node
+  t$target <- 2000+5*(i-26)/2
+  t$fund <- "Freedom"
+  all <- bind_rows(all,t)
+}
+
+for (i in seq(54,62,2)) {
+  t <- html_table(node[[i]], fill=TRUE) #take the first node
+  t$target <- 2000+5*(i-52)/2
+  t$fund <- "Index"
+  all <- bind_rows(all,t)
+}
+
+for (i in seq(65,79,2)) {
+  t <- html_table(node[[i]], fill=TRUE) #take the first node
+  t$target <- 2000+5*(i-53)/2
+  t$fund <- "Index"
+  all <- bind_rows(all,t)
+}
+
+for (i in seq(81,105,2)) {
+  t <- html_table(node[[i]], fill=TRUE) #take the first node
+  t$target <- 2000+5*(i-79)/2
+  t$fund <- "Flex"
+  all <- bind_rows(all,t)
+}
+all$date <- as.Date("2017-12-31")
+
+a <- all
+
+library(stringr)
+a$de_pos <- str_locate(a$X1,"Domestic Equity Funds")[,2]
+a$ie_pos <- str_locate(a$X1,"International Equity Funds")[,2]
+a$bf_pos <- str_locate(a$X1,"Bond Funds")[,2]
+a$st_pos <- str_locate(a$X1,"Short-Term Funds")[,2]
+a$cf_pos <- str_locate(a$X1,"Commodity Funds")[,2]
+
+a$pos <- ifelse(!is.na(a$de_pos),a$de_pos,
+                  ifelse(!is.na(a$ie_pos), a$ie_pos,
+                         ifelse(!is.na(a$bf_pos),a$bf_pos, 
+                                ifelse(!is.na(a$st_pos), a$st_pos,
+                                       ifelse(!is.na(a$cf_pos), a$cf_pos,NA)))))
+
+a <- a %>% filter(!is.na(pos)) %>% select(X1,pos, target, fund, date) 
+a$share <- as.numeric(gsub("%","",substr(a$X1,a$pos+4,a$pos+10)))
+a$class <- substr(a$X1,1,a$pos)
+
+#index funds break out domestic equity and commmodity,
+#freedom funds do not, they have commodity folded into domestic equity
+#commodity funds make up only 1-1.5% anyway so I will fold them into domestic equity for everyone
+
+a$class[a$class=="Commodity Funds"] <- "Domestic Equity Funds"
+a <- a %>% group_by(date, target,fund, class) %>% summarise(share=sum(share))
+
+a <- a %>% group_by(target, date, fund) %>% mutate(tot=sum(share))
+#the income fund is labeled as target 2000
+a <- a %>% ungroup() %>% mutate(target=ifelse(target==2065,2000,target))
+
+write_csv(a,"Fidelity_TDFs_Dec_2017.csv")
+```

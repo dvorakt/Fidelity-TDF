@@ -1,0 +1,88 @@
+```{r}
+library(tidyverse)
+library(rvest)
+
+url <- "https://www.sec.gov/Archives/edgar/data/880195/000082353513000057/main.htm" #Dec 2012
+page <- read_html(url)
+node <- html_nodes(page, 'table') 
+all <- data.frame()
+
+#the funds are scattered through the document so I had to search which table corresponds to which fund
+#the 2012 data has Advisor, Freedom, Index and K funds, I don't collect data on K funds
+#there is 2000 target fund, income fund and the longest dated is 2055 fund
+#I initially label the income fund as 2060 fund (because it often comes after 2055)
+
+#get freedom
+target <- c(0,5,10,15,20,25,35,40,45,50,30,55)
+for (i in seq(20,53,3)) {
+  t <- html_table(node[[i]], fill=TRUE) #take the first node
+  t$target <- 2000+target[(i-17)/3]
+  t$fund <- "Freedom"
+  all <- bind_rows(all,t)
+}
+t <- html_table(node[[116]], fill=TRUE) #take the first node
+t$target <- 2060
+t$fund <- "Freedom"
+all <- bind_rows(all,t)
+
+#get index
+target <- c(55,20,40,05,30,35,45,50,25,0,60,15,10)
+for (i in seq(77,113,3)) {
+  t <- html_table(node[[i]], fill=TRUE) 
+  t$target <- 2000+target[(i-74)/3]
+  t$fund <- "Index"
+  all <- bind_rows(all,t)
+}
+
+#get advisor
+target <- c(5,20,30,35,50,15,45,40,25,10,55,60)
+table <- c(2,5,8,11,14,17,119,122,128,131,143,146)
+for (i in 1:12) {
+  t <- html_table(node[[table[i]]], fill=TRUE) 
+  t$target <- 2000+target[i]
+  t$fund <- "Advisor"
+  all <- bind_rows(all,t)
+}
+
+all$date <- as.Date("2012-12-31")
+
+#let's clean the data
+a <- all
+
+library(stringr)
+a$de_pos <- str_locate(a$X1,"Domestic Equity Funds")[,2]
+a$ie_pos <- str_locate(a$X1,"International Equity Funds")[,2]
+a$bf_pos <- str_locate(a$X1,"Bond Funds")[,2]
+a$st_pos <- str_locate(a$X1,"Short-Term Funds")[,2]
+a$cf_pos <- str_locate(a$X1,"Commodity Funds")[,2]
+
+a$pos <- ifelse(!is.na(a$de_pos),a$de_pos,
+                  ifelse(!is.na(a$ie_pos), a$ie_pos,
+                         ifelse(!is.na(a$bf_pos),a$bf_pos, 
+                                ifelse(!is.na(a$st_pos), a$st_pos,
+                                       ifelse(!is.na(a$cf_pos), a$cf_pos,NA)))))
+
+a <- a %>% filter(!is.na(pos)) %>% select(X1,pos, target, fund, date) 
+a$share <- as.numeric(gsub("%","",substr(a$X1,a$pos+4,a$pos+10)))
+a$class <- substr(a$X1,1,a$pos)
+
+a <- a %>% filter(class!="Developed International Equity Funds") %>%
+  filter(class!="High Yield Bond Funds") %>%
+  filter(class!="Investment Grade Bond Funds") %>%
+  filter(class!="Inflation-Protected Bond Funds") %>%
+  filter(class!="Commodity Funds")
+
+#Domestic Equity is in there twice, I will use the first one
+#because the first one combines domestic eqity and commodity funds
+a <- a %>%  group_by(target, date, fund, class) %>% 
+  mutate(max=max(share)) %>%
+  filter(share==max) %>% #deletes the domestic equity that has higher share
+  select(-max)
+
+a <- a %>% group_by(target, date, fund) %>% mutate(tot=sum(share))
+a <- select(a, -X1, -pos)
+#the income fund is labeled as target 1995
+a <- a %>% ungroup() %>% mutate(target=ifelse(target==2060,1995,target))
+
+write_csv(a,"Fidelity_TDFs_Dec_2012.csv")
+```
